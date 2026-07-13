@@ -1,6 +1,9 @@
 @echo off
-cd /d C:\KonCoOS\business-os
+cd /d "%~dp0"
+echo [Business OS] Stopping all services...
 docker compose down
 echo.
-echo Business OS остановлен.
+echo ============================================
+echo  Business OS stopped.
+echo ============================================
 pause
