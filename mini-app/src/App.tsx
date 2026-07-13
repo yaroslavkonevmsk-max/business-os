@@ -3,7 +3,6 @@ import { lazy } from 'react'
 import { AuthProvider } from '@/context/AuthContext'
 import { useTheme } from '@/hooks/useTheme'
 import { Layout } from '@/components/Layout'
-import { LoadingSpinner } from '@/components/LoadingSpinner'
 
 const Dashboard = lazy(() => import('@/pages/Dashboard'))
 const Clients = lazy(() => import('@/pages/Clients'))
