@@ -11,7 +11,7 @@ import { Receipt, Plus } from 'lucide-react'
 // Mock API for expenses since the spec doesn't list a dedicated module
 const getExpenses = async (page = 1): Promise<{ items: Expense[]; total: number; page: number; pages: number }> => {
   const { data } = await post('/api/v1/expenses/list', { page, limit: 20 })
-  return data
+  return data as { items: Expense[]; total: number; page: number; pages: number }
 }
 
 export default function Expenses(): JSX.Element {
