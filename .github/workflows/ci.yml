@@ -1,0 +1,145 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1. Test
+  # ------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_business_os
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Run backend tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/test_business_os
+          REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: ci-test-secret-key
+          BANK_TOKEN_ENCRYPTION_KEY: 00000000000000000000000000000000
+        run: |
+          cd backend
+          pytest --cov=app --cov-report=xml -v
+
+      - name: Install bot dependencies
+        run: |
+          cd bot
+          pip install -r requirements.txt
+
+      - name: Run bot tests
+        run: |
+          cd bot
+          pytest --cov=app --cov-report=xml -v
+
+      - name: Install document_engine dependencies
+        run: |
+          cd document_engine
+          pip install -r requirements.txt
+
+      - name: Run document_engine tests
+        run: |
+          cd document_engine
+          pytest --cov=app --cov-report=xml -v
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: >-
+            backend/coverage.xml,
+            bot/coverage.xml,
+            document_engine/coverage.xml
+
+  # ------------------------------------------------------------------
+  # 2. Build Docker Images
+  # ------------------------------------------------------------------
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        run: docker build -t business-os/backend:latest ./backend
+
+      - name: Build bot image
+        run: docker build -t business-os/bot:latest ./bot
+
+      - name: Build document_engine image
+        run: docker build -t business-os/document_engine:latest ./document_engine
+
+      - name: Compose build (full stack)
+        run: docker compose -f docker-compose.yml build
+
+      # Uncomment to push to registry on main/develop
+      # - name: Login to registry
+      #   if: github.ref == 'refs/heads/main'
+      #   run: |
+      #     echo ${{ secrets.REGISTRY_TOKEN }} | docker login registry.selectel.ru -u ${{ secrets.REGISTRY_USER }} --password-stdin
+      # - name: Push images
+      #   if: github.ref == 'refs/heads/main'
+      #   run: docker compose -f docker-compose.yml push
+
+  # ------------------------------------------------------------------
+  # 3. Deploy (production only)
+  # ------------------------------------------------------------------
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /opt/business-os
+            git pull origin main
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker compose exec -T backend alembic upgrade head
+            docker compose exec -T backend pytest -x -q
+            docker system prune -f
